@@ -1,9 +1,15 @@
 //@version=5
 indicator("Trade Signals - EMA Cross + RSI", overlay=true)
 
+// ---- Parametros de risco (ajustaveis no grafico, botao de engrenagem do indicador) ----
+slMult = input.float(1.5, title="Stop Loss (x ATR)", step=0.1)
+tpMult = input.float(2.5, title="Take Profit (x ATR)", step=0.1)
+atrLen = input.int(14, title="ATR Length")
+
 emaFast = ta.ema(close, 9)
 emaSlow = ta.ema(close, 21)
 rsiValue = ta.rsi(close, 14)
+atrValue = ta.atr(atrLen)
 
 plot(emaFast, color=color.blue, title="EMA 9")
 plot(emaSlow, color=color.orange, title="EMA 21")
@@ -11,8 +17,29 @@ plot(emaSlow, color=color.orange, title="EMA 21")
 longCondition = ta.crossover(emaFast, emaSlow) and rsiValue > 50
 shortCondition = ta.crossunder(emaFast, emaSlow) and rsiValue < 50
 
+// Ponto de entrada = preco de fechamento do candle do sinal.
+// Stop Loss / Take Profit calculados por ATR (distancia da volatilidade recente),
+// assim cada par tem um SL/TP proporcional ao seu proprio range, nao um valor fixo.
+longSL = close - atrValue * slMult
+longTP = close + atrValue * tpMult
+shortSL = close + atrValue * slMult
+shortTP = close - atrValue * tpMult
+
+// Plots "ocultos" (display=display.none) servem so pra alimentar os placeholders
+// {{plot("Titulo")}} usados na mensagem do alerta la embaixo.
+plot(longSL, title="Long SL", display=display.none)
+plot(longTP, title="Long TP", display=display.none)
+plot(shortSL, title="Short SL", display=display.none)
+plot(shortTP, title="Short TP", display=display.none)
+
 plotshape(longCondition, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
 plotshape(shortCondition, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
+// Linhas visuais de SL/TP no candle do sinal (fica visivel no grafico pra conferir a olho).
+plot(longCondition ? longSL : na, title="Long SL (marca)", style=plot.style_circles, color=color.red, linewidth=2)
+plot(longCondition ? longTP : na, title="Long TP (marca)", style=plot.style_circles, color=color.green, linewidth=2)
+plot(shortCondition ? shortSL : na, title="Short SL (marca)", style=plot.style_circles, color=color.red, linewidth=2)
+plot(shortCondition ? shortTP : na, title="Short TP (marca)", style=plot.style_circles, color=color.green, linewidth=2)
 
 // Configure um alerta pra cada uma dessas condicoes (botao direito no grafico > Add Alert),
 // escolhendo a condicao "Sinal de COMPRA" ou "Sinal de VENDA" desse indicador.
@@ -20,6 +47,6 @@ plotshape(shortCondition, style=shape.triangledown, location=location.abovebar, 
 // pelo mesmo valor de WEBHOOK_SECRET configurado na Vercel).
 // No campo "Webhook URL", cole: https://SEU-PROJETO.vercel.app/api/webhook
 
-alertcondition(longCondition, title="Sinal de COMPRA", message='{"secret":"SEU_SEGREDO_AQUI","pair":"{{ticker}}","action":"buy","price":{{close}},"strategy":"EMA9x21 + RSI"}')
+alertcondition(longCondition, title="Sinal de COMPRA", message='{"secret":"SEU_SEGREDO_AQUI","pair":"{{ticker}}","action":"buy","price":{{close}},"entry":{{close}},"takeProfit":{{plot("Long TP")}},"stopLoss":{{plot("Long SL")}},"strategy":"EMA9x21 + RSI"}')
 
-alertcondition(shortCondition, title="Sinal de VENDA", message='{"secret":"SEU_SEGREDO_AQUI","pair":"{{ticker}}","action":"sell","price":{{close}},"strategy":"EMA9x21 + RSI"}')
+alertcondition(shortCondition, title="Sinal de VENDA", message='{"secret":"SEU_SEGREDO_AQUI","pair":"{{ticker}}","action":"sell","price":{{close}},"entry":{{close}},"takeProfit":{{plot("Short TP")}},"stopLoss":{{plot("Short SL")}},"strategy":"EMA9x21 + RSI"}')
