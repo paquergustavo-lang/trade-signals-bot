@@ -1,0 +1,117 @@
+//@version=5
+indicator("Trade Signals - Forex Analitico (H4>H1>M15)", overlay=true)
+
+// ---- Parametros de risco (ajustaveis no grafico, botao de engrenagem) ----
+slMult = input.float(1.5, title="Stop Loss (x ATR)", step=0.1)
+tpMult = input.float(3.0, title="Take Profit (x ATR)", step=0.1)
+atrLen = input.int(14, title="ATR Length")
+emaFastLen = input.int(9, title="EMA Rapida")
+emaSlowLen = input.int(21, title="EMA Lenta")
+rsiLen = input.int(14, title="RSI Length")
+pivotLen = input.int(10, title="Pivot Lookback (Suporte/Resistencia)")
+volAvgLen = input.int(20, title="Media de Volume (periodos)")
+
+// Rode este indicador no grafico em M15. A logica reproduz o checklist de um
+// trader profissional antes de decidir uma entrada:
+//   1) Contexto macro: H4 = tendencia principal, H1 = confirmacao (filtros)
+//   2) Price action: suporte/resistencia (pivos) + padrao de candle (engolfo)
+//   3) Confirmacao: RSI (M15) + Volume acima da media
+//   4) Gestao de risco: SL/TP por ATR, com relacao Risco:Retorno explicita
+// Um sinal so dispara quando TODOS os itens acima confirmarem - poucas
+// entradas, mas cada uma e uma analise completa, nao um cruzamento isolado.
+
+// ---- M15 (timeframe do grafico) ----
+emaFast15 = ta.ema(close, emaFastLen)
+emaSlow15 = ta.ema(close, emaSlowLen)
+rsi15 = ta.rsi(close, rsiLen)
+atr15 = ta.atr(atrLen)
+
+// ---- H1 (confirmacao intermediaria) ----
+[emaFast60, emaSlow60] = request.security(syminfo.tickerid, "60", [ta.ema(close, emaFastLen), ta.ema(close, emaSlowLen)], lookahead=barmerge.lookahead_off)
+
+// ---- H4 (tendencia macro) ----
+[emaFast240, emaSlow240] = request.security(syminfo.tickerid, "240", [ta.ema(close, emaFastLen), ta.ema(close, emaSlowLen)], lookahead=barmerge.lookahead_off)
+
+h4Bull = emaFast240 > emaSlow240
+h4Bear = emaFast240 < emaSlow240
+h1Bull = emaFast60 > emaSlow60
+h1Bear = emaFast60 < emaSlow60
+
+m15CrossUp = ta.crossover(emaFast15, emaSlow15) and rsi15 > 50
+m15CrossDown = ta.crossunder(emaFast15, emaSlow15) and rsi15 < 50
+
+// ---- Suporte e Resistencia (ultimos pivos confirmados no M15) ----
+swingHigh = ta.pivothigh(high, pivotLen, pivotLen)
+swingLow = ta.pivotlow(low, pivotLen, pivotLen)
+var float lastResistance = na
+var float lastSupport = na
+if not na(swingHigh)
+    lastResistance := swingHigh
+    if not na(swingLow)
+    lastSupport := swingLow
+
+        // ---- Padrao de candle no candle do sinal (engolfo de alta/baixa) ----
+        bullishEngulf = close > open and close[1] < open[1] and close >= open[1] and open <= close[1]
+        bearishEngulf = close < open and close[1] > open[1] and close <= open[1] and open >= close[1]
+
+        // ---- Volume acima da media confirma participacao real no movimento ----
+        volAvg = ta.sma(volume, volAvgLen)
+        volConfirm = volume > volAvg
+
+        // ---- Relacao Risco:Retorno (fixa pelos inputs de ATR) ----
+        riskReward = tpMult / slMult
+
+        // So dispara quando TODO o checklist bate: tendencia H4+H1+M15, candle,
+        // volume. Isso reduz a frequencia mas cada sinal e uma analise completa.
+        longCondition = m15CrossUp and h1Bull and h4Bull and bullishEngulf and volConfirm
+        shortCondition = m15CrossDown and h1Bear and h4Bear and bearishEngulf and volConfirm
+
+plot(emaFast15, color=color.blue, title="EMA Rapida M15")
+plot(emaSlow15, color=color.orange, title="EMA Lenta M15")
+
+// Fundo do grafico mostra a tendencia do H4 (verde = alta, vermelho = baixa,
+// cinza = indefinido) - so pra voce visualizar o contexto macro de relance.
+h4TrendColor = h4Bull ? color.new(color.green, 85) : h4Bear ? color.new(color.red, 85) : color.new(color.gray, 90)
+bgcolor(h4TrendColor, title="Tendencia H4 (fundo)")
+
+// Linhas de suporte/resistencia mais recentes, so pra referencia visual.
+plot(lastSupport, title="Suporte (linha)", color=color.new(color.teal, 40), style=plot.style_circles)
+plot(lastResistance, title="Resistencia (linha)", color=color.new(color.fuchsia, 40), style=plot.style_circles)
+
+// Entrada = fechamento do candle M15 do sinal. SL/TP por ATR do M15.
+longSL = close - atr15 * slMult
+longTP = close + atr15 * tpMult
+shortSL = close + atr15 * slMult
+shortTP = close - atr15 * tpMult
+
+// Plots ocultos so pra alimentar os placeholders {{plot("Titulo")}} do alerta.
+plot(longSL, title="Long SL", display=display.none)
+plot(longTP, title="Long TP", display=display.none)
+plot(shortSL, title="Short SL", display=display.none)
+plot(shortTP, title="Short TP", display=display.none)
+plot(lastSupport, title="Suporte", display=display.none)
+plot(lastResistance, title="Resistencia", display=display.none)
+plot(riskReward, title="Risco Retorno", display=display.none)
+
+plotshape(longCondition, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, title="Compra")
+plotshape(shortCondition, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, title="Venda")
+
+plot(longCondition ? longSL : na, title="Long SL (marca)", style=plot.style_circles, color=color.red, linewidth=2)
+plot(longCondition ? longTP : na, title="Long TP (marca)", style=plot.style_circles, color=color.green, linewidth=2)
+plot(shortCondition ? shortSL : na, title="Short SL (marca)", style=plot.style_circles, color=color.red, linewidth=2)
+plot(shortCondition ? shortTP : na, title="Short TP (marca)", style=plot.style_circles, color=color.green, linewidth=2)
+
+// Configure este indicador no grafico do par em M15. Clique direito no
+// grafico > Add Alert > escolha a condicao "Sinal de COMPRA (H4+H1+M15)" ou
+// "Sinal de VENDA (H4+H1+M15)". No Webhook URL, cole:
+// https://SEU-PROJETO.vercel.app/api/webhook
+// Troque SEU_SEGREDO_AQUI pelo mesmo valor do WEBHOOK_SECRET da Vercel.
+//
+// Como todo o checklist (tendencia + candle + volume) ja e exigido pelas
+// condicoes acima, quando o alerta dispara o padrao de candle e a
+// confirmacao de volume ja sao verdadeiros - por isso vao descritos como
+// texto fixo na mensagem, sem precisar de placeholder.
+
+alertcondition(longCondition, title="Sinal de COMPRA (H4+H1+M15)", message='{"secret":"SEU_SEGREDO_AQUI","pair":"{{ticker}}","action":"buy","market":"forex","price":{{close}},"entry":{{close}},"takeProfit":{{plot("Long TP")}},"stopLoss":{{plot("Long SL")}},"strategy":"H4+H1+M15 EMA9x21+RSI","candlePattern":"Engolfo de alta","volumeConfirm":true,"support":{{plot("Suporte")}},"resistance":{{plot("Resistencia")}},"riskReward":{{plot("Risco Retorno")}}}')
+
+alertcondition(shortCondition, title="Sinal de VENDA (H4+H1+M15)", message='{"secret":"SEU_SEGREDO_AQUI","pair":"{{ticker}}","action":"sell","market":"forex","price":{{close}},"entry":{{close}},"takeProfit":{{plot("Short TP")}},"stopLoss":{{plot("Short SL")}},"strategy":"H4+H1+M15 EMA9x21+RSI","candlePattern":"Engolfo de baixa","volumeConfirm":true,"support":{{plot("Suporte")}},"resistance":{{plot("Resistencia")}},"riskReward":{{plot("Risco Retorno")}}}')
