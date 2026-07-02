@@ -1,0 +1,79 @@
+//@version=5
+indicator("Trade Signals - Binarias (M1 + filtro M15 + Estocastico)", overlay=true)
+
+// ---- Parametros de risco ----
+slMult = input.float(1.0, title="Stop Loss (x ATR)", step=0.1)
+tpMult = input.float(1.5, title="Take Profit (x ATR)", step=0.1)
+atrLen = input.int(14, title="ATR Length")
+
+// ---- Parametros do Estocastico (confirmacao de timing de entrada) ----
+stochLen = input.int(5, title="Estocastico - periodo %K")
+stochSmoothK = input.int(3, title="Estocastico - suavizacao %K")
+stochSmoothD = input.int(3, title="Estocastico - periodo %D")
+stochOverbought = input.int(80, title="Estocastico - sobrecompra")
+stochOversold = input.int(20, title="Estocastico - sobrevenda")
+
+// Rode este indicador no grafico em M1 (mesmo timeframe da expiracao de 1
+// minuto). Resolve os 3 problemas relatados:
+//  1) Sinal falso demais -> Estocastico so confirma entrada fora da zona
+//     esgotada (nao compra sobrecomprado, nao vende sobrevendido).
+//  2) Opera contra o fluxo maior -> filtro de tendencia do M15 bloqueia
+//     entrada M1 que va contra a direcao do M15.
+//  3) Timing de entrada ruim -> Estocastico da um segundo confirmador de
+//     curtissimo prazo, alem do cruzamento de EMA, pra pegar o candle certo.
+
+emaFast = ta.ema(close, 9)
+emaSlow = ta.ema(close, 21)
+rsiValue = ta.rsi(close, 14)
+atrValue = ta.atr(atrLen)
+
+// Estocastico classico: %K bruto -> suaviza -> %D = media do %K suavizado.
+kRaw = ta.stoch(close, high, low, stochLen)
+kSmooth = ta.sma(kRaw, stochSmoothK)
+dSmooth = ta.sma(kSmooth, stochSmoothD)
+
+// Filtro de tendencia do M15 - mesma logica EMA9x21, so que no timeframe maior.
+[emaFast15, emaSlow15] = request.security(syminfo.tickerid, "15", [ta.ema(close, 9), ta.ema(close, 21)], lookahead=barmerge.lookahead_off)
+m15Bull = emaFast15 > emaSlow15
+m15Bear = emaFast15 < emaSlow15
+
+stochConfirmBuy = kSmooth > dSmooth and kSmooth < stochOverbought
+stochConfirmSell = kSmooth < dSmooth and kSmooth > stochOversold
+
+longCondition = ta.crossover(emaFast, emaSlow) and rsiValue > 50 and m15Bull and stochConfirmBuy
+shortCondition = ta.crossunder(emaFast, emaSlow) and rsiValue < 50 and m15Bear and stochConfirmSell
+
+plot(emaFast, color=color.blue, title="EMA 9")
+plot(emaSlow, color=color.orange, title="EMA 21")
+
+// Nota: em binaria o resultado e so direcao (call/put) dentro do prazo de
+// expiracao, nao ha "stop" de verdade. Esses valores de SL/TP ficam so como
+// referencia de volatilidade (distancia esperada do movimento), nao como
+// ordem real a ser colocada.
+longSL = close - atrValue * slMult
+longTP = close + atrValue * tpMult
+shortSL = close + atrValue * slMult
+shortTP = close - atrValue * tpMult
+
+plot(longSL, title="Long SL", display=display.none)
+plot(longTP, title="Long TP", display=display.none)
+plot(shortSL, title="Short SL", display=display.none)
+plot(shortTP, title="Short TP", display=display.none)
+
+plotshape(longCondition, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, title="Compra")
+plotshape(shortCondition, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, title="Venda")
+
+plot(longCondition ? longSL : na, title="Long SL (marca)", style=plot.style_circles, color=color.red, linewidth=2)
+plot(longCondition ? longTP : na, title="Long TP (marca)", style=plot.style_circles, color=color.green, linewidth=2)
+plot(shortCondition ? shortSL : na, title="Short SL (marca)", style=plot.style_circles, color=color.red, linewidth=2)
+plot(shortCondition ? shortTP : na, title="Short TP (marca)", style=plot.style_circles, color=color.green, linewidth=2)
+
+// Configure este indicador no grafico do par em M1. Clique direito no
+// grafico > Add Alert > escolha "Sinal de COMPRA (Binaria)" ou "Sinal de
+// VENDA (Binaria)". No Webhook URL, cole:
+// https://SEU-PROJETO.vercel.app/api/webhook
+// Troque SEU_SEGREDO_AQUI pelo mesmo valor do WEBHOOK_SECRET da Vercel.
+
+alertcondition(longCondition, title="Sinal de COMPRA (Binaria)", message='{"secret":"SEU_SEGREDO_AQUI","pair":"{{ticker}}","action":"buy","market":"binary","price":{{close}},"entry":{{close}},"takeProfit":{{plot("Long TP")}},"stopLoss":{{plot("Long SL")}},"strategy":"M1 EMA9x21+RSI+Estocastico, filtro M15"}')
+
+alertcondition(shortCondition, title="Sinal de VENDA (Binaria)", message='{"secret":"SEU_SEGREDO_AQUI","pair":"{{ticker}}","action":"sell","market":"binary","price":{{close}},"entry":{{close}},"takeProfit":{{plot("Short TP")}},"stopLoss":{{plot("Short SL")}},"strategy":"M1 EMA9x21+RSI+Estocastico, filtro M15"}')
